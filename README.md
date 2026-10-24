@@ -7,27 +7,24 @@ office and mobile networks before the release ships.
 
 ## What the page does
 
-- **With a friend (no relay at all).** One person makes an invite code, the
-  other pastes it and sends back a reply code. That is the whole handshake.
-- **With everyone (Nostr test room).** Browsers find each other through public
-  Nostr relays and form a small mesh. A chat floods across the mesh so people
-  who are not directly linked still see each message.
-- **Shows its own network activity.** Every outside host the page contacts is
-  listed live, along with a counter of browserCoin servers contacted (it stays
-  at 0).
-- **Collects results.** A "copy report for Discord" button gives a short
-  summary with no IP addresses, codes or names in it.
-
-It runs on its own Nostr topic (`browsercoin-p2p-demo-v1`), so test traffic
-never mixes with the real browserCoin network.
+- **Your code is ready on load**, as a QR code and a link. The invite QR is a
+  link, so a friend who scans it with a phone camera lands on this page with
+  the code filled in and gets their reply straight away.
+- **Add your friend's code** by pasting the code or link, uploading a
+  screenshot of their QR, dropping an image, or pasting one with Ctrl+V.
+- **Connected**, the two browsers chat directly. Chat hops across links, so
+  friends of friends see it too.
+- **Shows its own network activity** (folded away at the bottom), plus a
+  "servers used" counter that stays at 0.
+- **Test report for Discord** with no IP addresses, codes or names in it.
 
 ## Same code as the release
 
-`src/signal/` is copied from browserCoin's `src/net/signal/` on the
-`serverless-signaling` branch. The only changes are the imports, which point
-at `src/signal/deps.ts` instead of the rest of the browserCoin tree, the
-network name in that file, and punctuation in comments. If the release code
-changes, copy it over again.
+The files in `src/signal/` are copied from browserCoin's `src/net/signal/` on
+the `serverless-signaling` branch, minus the Nostr transport this demo does
+not use. The only changes are the imports, which point at
+`src/signal/deps.ts` instead of the rest of the browserCoin tree, and
+punctuation in comments. If the release code changes, copy it over again.
 
 ## Run it
 

@@ -1,10 +1,5 @@
-// The only lines that differ from browserCoin's src/net/signal/: the three
-// helpers those files imported from elsewhere in the browserCoin tree.
-import { sha256 as nobleSha256 } from '@noble/hashes/sha2';
-
-export function sha256(data: Uint8Array): Uint8Array {
-  return nobleSha256(data);
-}
+// The only lines that differ from browserCoin's src/net/signal/: the hex
+// helpers sdp.ts imported from elsewhere in the browserCoin tree.
 
 export function bytesToHex(bytes: Uint8Array): string {
   let s = '';
@@ -22,9 +17,3 @@ export function hexToBytes(hex: string): Uint8Array {
   }
   return out;
 }
-
-/**
- * A separate network name, so demo traffic lands on its own Nostr topic and
- * can never be mistaken for, or mixed into, the real browserCoin network.
- */
-export const BROWSERCOIN_NETWORK = 'browsercoin-p2p-demo-v1';

@@ -1,98 +1,332 @@
 import { contactList, onContact } from './track.js';
 import { ICE_SERVERS } from './signal/ice.js';
-import { ManualHandshake } from './signal/manual.js';
-import { DEFAULT_NOSTR_RELAYS, NostrTransport } from './signal/nostr.js';
-import { SignalSwarm } from './signal/swarm.js';
+import { ManualHandshake, decodeCode } from './signal/manual.js';
 import type { PeerConn } from './signal/types.js';
+import QRCode from 'qrcode';
+import jsQR from 'jsqr';
 import logoUrl from './logo.png';
 import './style.css';
 
-// ── Identity ────────────────────────────────────────────────────────────────
+/** Where invite links point when this copy was opened from disk. */
+const HOSTED_URL = 'https://swompythesecond.github.io/p2p-demo-browsercoin/';
+const FLOOD_TTL = 6;
+const NAME_KEY = 'p2pdemo:name';
 
 const selfId = `demo-${randomChars(10)}`;
-const NAME_KEY = 'p2pdemo:name';
 const ADJ = ['Quiet', 'Brave', 'Sunny', 'Swift', 'Clever', 'Lucky', 'Calm', 'Bold', 'Witty', 'Cosmic'];
 const NOUN = ['Otter', 'Falcon', 'Badger', 'Panda', 'Lynx', 'Heron', 'Gecko', 'Moose', 'Koala', 'Raven'];
 let myName = load(NAME_KEY) ?? `${pick(ADJ)} ${pick(NOUN)}`;
 
-/** Most links the room keeps. Enough for a mesh, few enough to be polite. */
-const ROOM_TARGET = 5;
-const HERE_EVERY_MS = 8_000;
-const ROSTER_TTL_MS = 25_000;
-const FLOOD_TTL = 6;
+const fromDisk = location.protocol === 'file:';
+const pageUrl = fromDisk ? HOSTED_URL : location.origin + location.pathname;
 
 // ── State ───────────────────────────────────────────────────────────────────
 
-type Via = 'code' | 'room';
 type LinkKind = 'same network' | 'across the internet' | 'relayed' | 'checking';
 
 interface Link {
   conn: PeerConn;
-  via: Via;
   name: string;
-  since: number;
   kind: LinkKind;
   rtt: number | null;
 }
 
-interface RosterEntry {
-  name: string;
-  links: string[];
-  seen: number;
+interface Mine {
+  mode: 'invite' | 'reply';
+  code: string;
+  /** For a reply: whose invite it answers, and when we made it. */
+  forPeer?: string;
+  since?: number;
 }
 
 const links = new Map<string, Link>();
-const roster = new Map<string, RosterEntry>();
 const seen = new Set<string>();
-let swarm: SignalSwarm | null = null;
-let roomJoinedAt = 0;
-/** True once at least one relay answered, so the room status can say we are in. */
-let roomReady = false;
-
-/** What the report says. Only outcomes, never codes, names or addresses. */
+/** Outcomes for the Discord report. Never codes, names or addresses. */
 const results: string[] = [];
 
-// ── Connections ─────────────────────────────────────────────────────────────
+/** What the left card shows: our own invite, or a reply to someone's invite. */
+let mine: Mine | null = null;
+let busy = false;
 
 const manual = new ManualHandshake({
   selfId,
-  onConnection: (conn) => adopt(conn, 'code'),
+  onConnection: adopt,
   hasPeer: (id) => links.has(id),
 });
 
-function adopt(conn: PeerConn, via: Via): void {
+// ── DOM ─────────────────────────────────────────────────────────────────────
+
+const $ = <T extends Element = HTMLElement>(sel: string): T => document.querySelector<T>(sel)!;
+$<HTMLImageElement>('[data-logo]').src = logoUrl;
+
+const qrCanvas = $<HTMLCanvasElement>('[data-qr]');
+const mineTitle = $('[data-mine-title]');
+const mineHint = $('[data-mine-hint]');
+const mineMsg = $('[data-mine-msg]');
+const copyMine = $<HTMLButtonElement>('[data-copy-mine]');
+const shareMine = $<HTMLButtonElement>('[data-share-mine]');
+const theirIn = $<HTMLTextAreaElement>('[data-their-in]');
+const theirMsg = $('[data-their-msg]');
+const chatIn = $<HTMLInputElement>('[data-chat-in]');
+const nameInput = $<HTMLInputElement>('[data-name]');
+
+// ── Your code (left card) ───────────────────────────────────────────────────
+
+let making = false;
+
+async function makeInvite(): Promise<void> {
+  if (making) return;
+  making = true;
+  flash(mineMsg, 'Making your code…', 'muted');
+  copyMine.disabled = true;
+  try {
+    const code = await manual.createInvite();
+    await showMine({ mode: 'invite', code });
+    flash(mineMsg, 'Ready. Waiting for your friend.', 'muted');
+  } catch (e) {
+    flash(mineMsg, errorText(e), 'red');
+    results.push(`could not make a code: ${errorText(e).slice(0, 60)}`);
+  } finally {
+    making = false;
+  }
+}
+
+/** Invites travel as a link, so a phone camera scan opens this page with the code filled in. */
+function shareable(m: Mine): string {
+  return m.mode === 'invite' ? `${pageUrl}#${m.code}` : m.code;
+}
+
+async function showMine(m: Mine): Promise<void> {
+  mine = m;
+  const invite = m.mode === 'invite';
+  mineTitle.textContent = invite ? '1. Your code' : '1. Send this back';
+  mineHint.textContent = invite
+    ? 'Let your friend scan this, or send them the link.'
+    : 'Your friend scans this or pastes it into their page. You connect the moment they do.';
+  copyMine.textContent = invite ? 'Copy link' : 'Copy reply';
+  copyMine.disabled = false;
+  shareMine.hidden = typeof navigator.share !== 'function';
+  await QRCode.toCanvas(qrCanvas, shareable(m), {
+    width: 240,
+    margin: 2,
+    errorCorrectionLevel: 'M',
+    color: { dark: '#0d0f17', light: '#ffffff' },
+  });
+  qrCanvas.removeAttribute('style'); // the library sets a fixed size; CSS sizes it instead
+}
+
+copyMine.addEventListener('click', () => mine && copy(copyMine, shareable(mine)));
+shareMine.addEventListener('click', () => {
+  if (mine) void navigator.share({ text: shareable(mine) }).catch(() => { /* sheet closed */ });
+});
+
+// ── Your friend's code (right card) ─────────────────────────────────────────
+
+/** Accept a bare code, a code with stray whitespace, or one of our invite links. */
+function extractCode(raw: string): string {
+  const t = raw.trim();
+  const hash = t.indexOf('#');
+  return (hash >= 0 ? t.slice(hash + 1) : t).replace(/\s+/g, '');
+}
+
+async function useTheirCode(raw: string): Promise<void> {
+  const code = extractCode(raw);
+  if (!code || busy) return;
+  const decoded = decodeCode(code);
+  if (decoded === null) return flash(theirMsg, "That doesn't look like a code. Copy the whole thing and try again.", 'red');
+  if (decoded === 'incomplete') return flash(theirMsg, 'That code looks cut off. Copy the whole thing and try again.', 'red');
+  if (decoded === 'version') return flash(theirMsg, 'That code comes from a newer version of this page. Reload and try again.', 'red');
+  if (decoded.peerId === selfId) return flash(theirMsg, "That's your own code. Your friend needs it, not you.", 'red');
+  if (links.has(decoded.peerId)) return flash(theirMsg, "You're already connected to them.", 'green');
+
+  busy = true;
+  const t0 = Date.now();
+  try {
+    if (/^a=setup:actpass$/m.test(decoded.sdp)) {
+      // Their invite: answer it. The link opens once they use our reply.
+      flash(theirMsg, 'Making your reply…', 'muted');
+      const reply = await manual.acceptInvite(code);
+      await showMine({ mode: 'reply', code: reply, forPeer: decoded.peerId, since: Date.now() });
+      flash(mineMsg, 'Waiting for your friend to use your reply.', 'muted');
+      flash(theirMsg, 'Got it. Now send your reply back to them.', 'green');
+      results.push('joined a friend: made a reply');
+    } else {
+      // Their reply to our invite: this finishes the handshake.
+      if (mine?.mode !== 'invite' || !manual.currentInvite()) {
+        flash(theirMsg, 'That is a reply code. Put it into the page that made the original code.', 'red');
+        return;
+      }
+      flash(theirMsg, 'Connecting…', 'muted');
+      await manual.completeInvite(code);
+      flash(theirMsg, 'Connected.', 'green');
+      results.push(`invited a friend: connected in ${secs(Date.now() - t0)}`);
+      void makeInvite();
+    }
+    theirIn.value = '';
+  } catch (e) {
+    flash(theirMsg, errorText(e), 'red');
+    results.push(`failed: ${errorText(e).slice(0, 80)}`);
+    if (!manual.currentInvite() && mine?.mode === 'invite') void makeInvite();
+  } finally {
+    busy = false;
+    render();
+  }
+}
+
+$('[data-go]').addEventListener('click', () => void useTheirCode(theirIn.value));
+// A complete, valid code needs no button press.
+theirIn.addEventListener('input', () => {
+  const d = decodeCode(extractCode(theirIn.value));
+  if (d && typeof d === 'object') void useTheirCode(theirIn.value);
+});
+
+// Images: upload, drop, or paste a screenshot of their QR.
+$<HTMLInputElement>('[data-upload]').addEventListener('change', (ev) => {
+  const input = ev.currentTarget as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (file) void useImage(file);
+});
+const theirCard = $('[data-theirs]');
+theirCard.addEventListener('dragover', (ev) => { ev.preventDefault(); theirCard.classList.add('drop'); });
+theirCard.addEventListener('dragleave', () => theirCard.classList.remove('drop'));
+theirCard.addEventListener('drop', (ev) => {
+  ev.preventDefault();
+  theirCard.classList.remove('drop');
+  const file = [...(ev.dataTransfer?.files ?? [])].find((f) => f.type.startsWith('image/'));
+  if (file) void useImage(file);
+});
+document.addEventListener('paste', (ev) => {
+  const file = [...(ev.clipboardData?.files ?? [])].find((f) => f.type.startsWith('image/'));
+  if (!file) return;
+  ev.preventDefault();
+  void useImage(file);
+});
+
+async function useImage(file: Blob): Promise<void> {
+  flash(theirMsg, 'Reading the QR code…', 'muted');
+  const text = await readQr(file).catch(() => null);
+  if (!text) {
+    flash(theirMsg, "Couldn't find a QR code in that image. Try a sharper or closer screenshot.", 'red');
+    results.push('qr image: no code found');
+    return;
+  }
+  results.push('qr image: read ok');
+  theirIn.value = text;
+  void useTheirCode(text);
+}
+
+/** Decode a QR from an image, trying a few sizes since screenshots vary wildly. */
+async function readQr(file: Blob): Promise<string | null> {
+  const bmp = await createImageBitmap(file);
+  const tried = new Set<number>();
+  for (const max of [1600, 3200, 800]) {
+    const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const w = Math.max(1, Math.round(bmp.width * scale));
+    const h = Math.max(1, Math.round(bmp.height * scale));
+    if (tried.has(w)) continue;
+    tried.add(w);
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext('2d', { willReadFrequently: true })!;
+    ctx.drawImage(bmp, 0, 0, w, h);
+    const hit = jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'attemptBoth' });
+    if (hit?.data) return hit.data;
+  }
+  return null;
+}
+
+// ── Links and chat ──────────────────────────────────────────────────────────
+
+function adopt(conn: PeerConn): void {
   if (links.has(conn.peer)) {
     conn.close();
     return;
   }
-  const link: Link = { conn, via, name: 'someone', since: Date.now(), kind: 'checking', rtt: null };
-  links.set(conn.peer, link);
+  links.set(conn.peer, { conn, name: 'your friend', kind: 'checking', rtt: null });
   conn.on('data', (d) => onMessage(conn.peer, d));
   conn.on('close', () => drop(conn.peer));
   conn.on('error', () => drop(conn.peer));
   send(conn, { t: 'hello', name: myName });
   setTimeout(() => void classify(conn.peer), 1500);
-  if (via === 'room' && roomJoinedAt && !results.some((r) => r.startsWith('room:'))) {
-    results.push(`room: first link after ${secs(Date.now() - roomJoinedAt)}`);
+
+  if (mine?.mode === 'reply' && mine.forPeer === conn.peer) {
+    results.push(`joined a friend: connected ${secs(Date.now() - (mine.since ?? Date.now()))} after making the reply`);
+    flash(theirMsg, 'Connected.', 'green');
+    void makeInvite();
   }
-  announce();
   render();
+  $('[data-connected]').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function drop(id: string): void {
   if (!links.delete(id)) return;
-  announce();
   render();
 }
 
 function send(conn: PeerConn, msg: unknown): void {
-  try { conn.send(msg); } catch { /* channel closing; its close handler cleans up */ }
+  try { conn.send(msg); } catch { /* closing; the close handler cleans up */ }
 }
 
+function onMessage(from: string, data: unknown): void {
+  if (!data || typeof data !== 'object') return;
+  const m = data as Record<string, unknown>;
+  const link = links.get(from);
+  if (!link) return;
+  if (m.t === 'hello' && typeof m.name === 'string') {
+    link.name = cleanName(m.name) || link.name;
+    render();
+    return;
+  }
+  // Chat floods across links, so friends of friends see it too.
+  if (m.t !== 'chat' || typeof m.id !== 'string' || typeof m.text !== 'string' || seen.has(m.id)) return;
+  remember(m.id);
+  showChat(cleanName(String(m.name ?? '')), m.text.slice(0, 280), false);
+  const ttl = typeof m.ttl === 'number' ? Math.min(m.ttl, FLOOD_TTL) : 0;
+  if (ttl > 1) for (const [id, l] of links) if (id !== from) send(l.conn, { ...m, ttl: ttl - 1 });
+}
+
+function remember(id: string): void {
+  seen.add(id);
+  if (seen.size > 2000) seen.delete(seen.values().next().value as string);
+}
+
+$('[data-chat-form]').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const text = chatIn.value.trim().slice(0, 280);
+  if (!text || links.size === 0) return;
+  const id = randomChars(12);
+  remember(id);
+  for (const l of links.values()) send(l.conn, { t: 'chat', id, name: myName, text, ttl: FLOOD_TTL });
+  showChat(myName, text, true);
+  chatIn.value = '';
+});
+
+function showChat(name: string, text: string, isMine: boolean): void {
+  const log = $('[data-chat-log]');
+  const line = document.createElement('p');
+  line.className = isMine ? 'msg mine' : 'msg';
+  const who = document.createElement('b');
+  who.textContent = name || 'someone';
+  line.append(who, document.createTextNode(` ${text}`));
+  log.append(line);
+  while (log.children.length > 200) log.firstElementChild?.remove();
+  log.scrollTop = log.scrollHeight;
+}
+
+nameInput.value = myName;
+nameInput.addEventListener('change', () => {
+  myName = cleanName(nameInput.value) || myName;
+  nameInput.value = myName;
+  save(NAME_KEY, myName);
+  for (const l of links.values()) send(l.conn, { t: 'hello', name: myName });
+});
+
 /**
- * Work out what kind of path a link took, from the candidate pair ICE chose.
- * MeshConn keeps its RTCPeerConnection private; this read-only peek is the one
- * thing the demo needs that the release code doesn't expose.
+ * What kind of path a link took, from the candidate pair ICE chose. MeshConn
+ * keeps its RTCPeerConnection private; this read-only peek is the one thing
+ * the demo needs that the release code doesn't expose.
  */
 async function classify(id: string): Promise<void> {
   const link = links.get(id);
@@ -112,9 +346,8 @@ async function classify(id: string): Promise<void> {
       });
     }
     if (!pair) return;
-    const local = stats.get(pair.localCandidateId as string) as { candidateType?: string } | undefined;
-    const remote = stats.get(pair.remoteCandidateId as string) as { candidateType?: string } | undefined;
-    const types = [local?.candidateType, remote?.candidateType];
+    const types = [pair.localCandidateId, pair.remoteCandidateId]
+      .map((cid) => (stats.get(cid as string) as { candidateType?: string } | undefined)?.candidateType);
     link.kind = types.includes('relay') ? 'relayed'
       : types.every((t) => t === 'host') ? 'same network'
       : 'across the internet';
@@ -122,267 +355,73 @@ async function classify(id: string): Promise<void> {
     render();
   } catch { /* stats are a nicety */ }
 }
-
-// ── Gossip: hello, presence and chat ────────────────────────────────────────
-
-function onMessage(from: string, data: unknown): void {
-  if (!data || typeof data !== 'object') return;
-  const m = data as Record<string, unknown>;
-  const link = links.get(from);
-  if (!link) return;
-
-  if (m.t === 'hello' && typeof m.name === 'string') {
-    link.name = cleanName(m.name);
-    render();
-    return;
-  }
-
-  if (typeof m.id !== 'string' || seen.has(m.id) || typeof m.from !== 'string') return;
-  remember(m.id);
-
-  if (m.t === 'here' && Array.isArray(m.links)) {
-    if (m.from !== selfId) {
-      roster.set(m.from, {
-        name: cleanName(String(m.name ?? '')),
-        links: m.links.filter((x): x is string => typeof x === 'string').slice(0, 32),
-        seen: Date.now(),
-      });
-      render();
-    }
-  } else if (m.t === 'chat' && typeof m.text === 'string') {
-    showChat(cleanName(String(m.name ?? '')), m.text.slice(0, 280), false);
-  } else {
-    return;
-  }
-
-  const ttl = typeof m.ttl === 'number' ? Math.min(m.ttl, FLOOD_TTL) : 0;
-  if (ttl > 1) {
-    for (const [id, l] of links) if (id !== from) send(l.conn, { ...m, ttl: ttl - 1 });
-  }
-}
-
-function flood(msg: Record<string, unknown>): void {
-  const id = randomChars(12);
-  remember(id);
-  for (const l of links.values()) send(l.conn, { ...msg, id, from: selfId, ttl: FLOOD_TTL });
-}
-
-function announce(): void {
-  flood({ t: 'here', name: myName, links: [...links.keys()] });
-}
-
-function remember(id: string): void {
-  seen.add(id);
-  if (seen.size > 2000) seen.delete(seen.values().next().value as string);
-}
-
 setInterval(() => {
-  const now = Date.now();
-  for (const [id, r] of roster) if (now - r.seen > ROSTER_TTL_MS) roster.delete(id);
-  if (links.size > 0) announce();
   for (const id of links.keys()) void classify(id);
-  render();
-}, HERE_EVERY_MS);
+  // Invites expire after a while; never leave a dead code on screen.
+  if (mine?.mode === 'invite' && !busy && !manual.currentInvite()) void makeInvite();
+}, 10_000);
 
-// ── Nostr test room ─────────────────────────────────────────────────────────
+// ── Rendering ───────────────────────────────────────────────────────────────
 
-async function joinRoom(): Promise<void> {
-  if (swarm) return;
-  roomJoinedAt = Date.now();
-  const s = new SignalSwarm({
-    selfId,
-    wantsPeers: () => links.size < ROOM_TARGET,
-    onConnection: (conn) => adopt(conn, 'room'),
-    hasPeer: (id) => links.has(id),
+function render(): void {
+  $('[data-connected]').hidden = links.size === 0;
+  $('[data-connected-title]').textContent = links.size === 1
+    ? `Connected to ${[...links.values()][0]!.name}`
+    : `Connected to ${links.size} friends`;
+  $('[data-links]').replaceChildren(...[...links.values()].map((l) => {
+    const li = document.createElement('li');
+    const name = document.createElement('b');
+    name.textContent = l.name;
+    const meta = document.createElement('span');
+    meta.className = 'muted text-sm';
+    meta.textContent = `  ${l.kind}${l.rtt != null ? `, ${l.rtt} ms` : ''}, no server in between`;
+    li.append(name, meta);
+    return li;
+  }));
+  $('[data-report]').textContent = reportText();
+}
+
+function renderContacts(): void {
+  const list = contactList();
+  const ours = list.filter((c) => /(^|\.)browsercoin\.org$/i.test(c.host.split(':')[0]!));
+  $('[data-servers-count]').textContent = String(ours.length);
+  $('[data-servers-pill]').classList.toggle('bad', ours.length > 0);
+
+  const items = list.map((c) => {
+    const li = document.createElement('li');
+    li.innerHTML = '<b></b> <span class="muted text-sm"></span>';
+    li.querySelector('b')!.textContent = c.host;
+    li.querySelector('span')!.textContent = c.kind === 'websocket' ? 'WebSocket' : 'web request';
+    return li;
   });
-  swarm = s;
-  setRoomUi(true);
-  flash(roomMsg, 'Connecting to relays and looking for people…', 'muted');
-  try {
-    await s.start([new NostrTransport(DEFAULT_NOSTR_RELAYS)]);
-    if (swarm === s) roomReady = true;
-  } catch {
-    if (swarm === s) {
-      swarm = null;
-      setRoomUi(false);
-      flash(roomMsg, 'Could not reach any Nostr relay. Your network may block them. The code method still works.', 'red');
-      results.push('room: no relay reachable');
-    }
+  const stun = document.createElement('li');
+  stun.innerHTML = '<b>STUN</b> <span class="muted text-sm"></span>';
+  stun.querySelector('span')!.textContent =
+    `your browser asks one of these "what is my public address?" when making a code. They see your IP and nothing else: ${ICE_SERVERS.map((s) => String(s.urls).replace(/^stun:/, '').replace(/:\d+$/, '')).join(', ')}`;
+  if (list.length === 0) {
+    const none = document.createElement('li');
+    none.innerHTML = '<b>Nothing else</b> <span class="muted text-sm">This page has contacted no other server since it loaded.</span>';
+    items.push(none);
   }
-  render();
+  $('[data-contacts]').replaceChildren(stun, ...items);
 }
 
-function leaveRoom(): void {
-  swarm?.stop();
-  swarm = null;
-  roomReady = false;
-  roomJoinedAt = 0;
-  for (const [id, l] of links) {
-    if (l.via !== 'room') continue;
-    links.delete(id);
-    l.conn.close();
-  }
-  setRoomUi(false);
-  flash(roomMsg, 'Left the room.', 'muted');
-  announce();
-  render();
+function reportText(): string {
+  return [
+    'browserCoin p2p test report',
+    `browser: ${browserLabel()}`,
+    `opened from: ${fromDisk ? 'disk' : 'website'}`,
+    `webrtc: ${typeof RTCPeerConnection === 'function' ? 'yes' : 'NO'}`,
+    `links now: ${links.size}${links.size ? ` (${[...links.values()].map((l) => l.kind).join(', ')})` : ''}`,
+    ...(results.length ? results.map((r) => `- ${r}`) : ['- nothing tried yet']),
+  ].join('\n');
 }
 
-// ── DOM ─────────────────────────────────────────────────────────────────────
+$('[data-copy-report]').addEventListener('click', (ev) => copy(ev.currentTarget as HTMLButtonElement, reportText()));
 
-const $ = <T extends Element = HTMLElement>(sel: string): T => document.querySelector<T>(sel)!;
-
-$<HTMLImageElement>('[data-logo]').src = logoUrl;
-
-const nameInput = $<HTMLInputElement>('[data-name]');
-nameInput.value = myName;
-nameInput.addEventListener('change', () => {
-  myName = cleanName(nameInput.value) || myName;
-  nameInput.value = myName;
-  save(NAME_KEY, myName);
-  for (const l of links.values()) send(l.conn, { t: 'hello', name: myName });
-  announce();
-});
-
-// Tabs in the code card.
-for (const tab of document.querySelectorAll<HTMLButtonElement>('[data-tab]')) {
-  tab.addEventListener('click', () => {
-    for (const t of document.querySelectorAll('[data-tab]')) t.classList.toggle('active', t === tab);
-    for (const p of document.querySelectorAll<HTMLElement>('[data-pane]')) p.hidden = p.dataset.pane !== tab.dataset.tab;
-  });
-}
-
-const inviteOut = $<HTMLTextAreaElement>('[data-invite-out]');
-const replyIn = $<HTMLInputElement>('[data-reply-in]');
-const inviteIn = $<HTMLInputElement>('[data-invite-in]');
-const replyOut = $<HTMLTextAreaElement>('[data-reply-out]');
-const inviteMsg = $('[data-invite-msg]');
-const joinMsg = $('[data-join-msg]');
-const roomMsg = $('[data-room-msg]');
-const canShare = typeof navigator.share === 'function';
-
-function showCode(out: HTMLTextAreaElement, copy: string, share: string, code: string): void {
-  out.value = code;
-  const copyBtn = $<HTMLButtonElement>(copy);
-  const shareBtn = $<HTMLButtonElement>(share);
-  copyBtn.disabled = !code;
-  shareBtn.hidden = !canShare;
-  shareBtn.disabled = !code;
-}
-
-$('[data-mk-invite]').addEventListener('click', async (ev) => {
-  const btn = ev.currentTarget as HTMLButtonElement;
-  btn.disabled = true;
-  flash(inviteMsg, 'Gathering connection details…', 'muted');
-  try {
-    showCode(inviteOut, '[data-copy-invite]', '[data-share-invite]', await manual.createInvite());
-    flash(inviteMsg, 'Send this code to your friend, then paste their reply below.', 'green');
-  } catch (e) {
-    flash(inviteMsg, errorText(e), 'red');
-    results.push(`code: could not create invite (${errorText(e).slice(0, 60)})`);
-  } finally {
-    btn.disabled = false;
-  }
-});
-
-$('[data-finish]').addEventListener('click', async (ev) => {
-  const btn = ev.currentTarget as HTMLButtonElement;
-  const code = replyIn.value.trim();
-  if (!code) return flash(inviteMsg, 'Paste the reply code your friend sent you.', 'red');
-  btn.disabled = true;
-  const t0 = Date.now();
-  flash(inviteMsg, 'Connecting…', 'muted');
-  try {
-    await manual.completeInvite(code);
-    replyIn.value = '';
-    showCode(inviteOut, '[data-copy-invite]', '[data-share-invite]', '');
-    flash(inviteMsg, `Connected in ${secs(Date.now() - t0)}. No server involved. Say hi in the chat below.`, 'green');
-    results.push(`code (inviter): connected in ${secs(Date.now() - t0)}`);
-  } catch (e) {
-    showCode(inviteOut, '[data-copy-invite]', '[data-share-invite]', manual.currentInvite() ?? '');
-    flash(inviteMsg, errorText(e), 'red');
-    results.push(`code (inviter): failed, ${errorText(e).slice(0, 70)}`);
-  } finally {
-    btn.disabled = false;
-    render();
-  }
-});
-
-$('[data-accept]').addEventListener('click', async (ev) => {
-  const btn = ev.currentTarget as HTMLButtonElement;
-  const code = inviteIn.value.trim();
-  if (!code) return flash(joinMsg, 'Paste the invite code your friend sent you.', 'red');
-  btn.disabled = true;
-  flash(joinMsg, 'Gathering connection details…', 'muted');
-  try {
-    const reply = await manual.acceptInvite(code);
-    showCode(replyOut, '[data-copy-reply]', '[data-share-reply]', reply);
-    inviteIn.value = '';
-    flash(joinMsg, 'Now send this reply back. You connect as soon as they paste it.', 'green');
-    const before = links.size;
-    const t0 = Date.now();
-    // The joiner has no "connect" moment of its own; note it when the link lands.
-    const watch = setInterval(() => {
-      if (links.size > before) {
-        clearInterval(watch);
-        flash(joinMsg, 'Connected. No server involved. Say hi in the chat below.', 'green');
-        results.push(`code (joiner): connected ${secs(Date.now() - t0)} after making the reply`);
-        render();
-      } else if (Date.now() - t0 > 15 * 60_000) clearInterval(watch);
-    }, 500);
-  } catch (e) {
-    flash(joinMsg, errorText(e), 'red');
-    results.push(`code (joiner): failed, ${errorText(e).slice(0, 70)}`);
-  } finally {
-    btn.disabled = false;
-  }
-});
-
-for (const [btnSel, src] of [['[data-copy-invite]', inviteOut], ['[data-copy-reply]', replyOut]] as const) {
-  $(btnSel).addEventListener('click', (ev) => copy(ev.currentTarget as HTMLButtonElement, src.value));
-}
-for (const [btnSel, src] of [['[data-share-invite]', inviteOut], ['[data-share-reply]', replyOut]] as const) {
-  $(btnSel).addEventListener('click', () => {
-    void navigator.share({ text: src.value }).catch(() => { /* user closed the sheet */ });
-  });
-}
-
-$('[data-join-room]').addEventListener('click', () => void joinRoom());
-$('[data-leave-room]').addEventListener('click', leaveRoom);
-
-function setRoomUi(inRoom: boolean): void {
-  $<HTMLButtonElement>('[data-join-room]').hidden = inRoom;
-  $<HTMLButtonElement>('[data-leave-room]').hidden = !inRoom;
-}
-
-// Chat.
-const chatIn = $<HTMLInputElement>('[data-chat-in]');
-$('[data-chat-form]').addEventListener('submit', (ev) => {
-  ev.preventDefault();
-  const text = chatIn.value.trim().slice(0, 280);
-  if (!text || links.size === 0) return;
-  flood({ t: 'chat', name: myName, text });
-  showChat(myName, text, true);
-  chatIn.value = '';
-});
-
-function showChat(name: string, text: string, mine: boolean): void {
-  const log = $('[data-chat-log]');
-  const line = document.createElement('p');
-  line.className = mine ? 'msg mine' : 'msg';
-  const who = document.createElement('b');
-  who.textContent = name || 'someone';
-  line.append(who, document.createTextNode(` ${text}`));
-  log.append(line);
-  while (log.children.length > 200) log.firstElementChild?.remove();
-  log.scrollTop = log.scrollHeight;
-}
-
-// Save the page.
-const fromDisk = location.protocol === 'file:';
 $('[data-origin]').textContent = fromDisk
-  ? 'You opened this page from your own disk. No web host is involved at all right now.'
-  : `This page was loaded once from ${location.host}. After that, nothing it does goes back there. Save it and open the file to drop the web host too.`;
+  ? 'You opened this page from your own disk, so no web host is involved either.'
+  : `This page was loaded once from ${location.host}. Nothing it does goes back there. Save it and open the file to drop the web host too.`;
 $('[data-save]').hidden = fromDisk;
 $('[data-save]').addEventListener('click', async () => {
   try {
@@ -397,153 +436,22 @@ $('[data-save]').addEventListener('click', async () => {
   }
 });
 
-// Report.
-$('[data-copy-report]').addEventListener('click', (ev) => copy(ev.currentTarget as HTMLButtonElement, reportText()));
-
-function reportText(): string {
-  const kinds = [...links.values()].map((l) => `${l.via}/${l.kind}`);
-  return [
-    'browserCoin p2p test report',
-    `browser: ${browserLabel()}`,
-    `opened from: ${fromDisk ? 'disk' : 'website'}`,
-    `webrtc: ${typeof RTCPeerConnection === 'function' ? 'yes' : 'NO'}`,
-    `links now: ${links.size}${kinds.length ? ` (${kinds.join(', ')})` : ''}`,
-    `people seen in network: ${networkIds().length}`,
-    `relays up: ${swarm ? swarm.status()[0]?.endpoints.filter((e) => e.up).length ?? 0 : 'not in room'}`,
-    ...(results.length ? results.map((r) => `- ${r}`) : ['- nothing tried yet']),
-  ].join('\n');
-}
-
-// ── Rendering ───────────────────────────────────────────────────────────────
-
-function networkIds(): string[] {
-  const ids = new Set<string>([selfId, ...links.keys(), ...roster.keys()]);
-  return [...ids];
-}
-
-function render(): void {
-  const ids = networkIds();
-  const others = ids.length - 1;
-  $('[data-net-summary]').textContent = links.size === 0
-    ? 'Not connected to anyone yet.'
-    : `Linked directly to ${links.size} ${links.size === 1 ? 'browser' : 'browsers'}, ${others} ${others === 1 ? 'other browser' : 'other browsers'} in this network.`;
-
-  chatIn.disabled = links.size === 0;
-  $<HTMLButtonElement>('[data-chat-send]').disabled = links.size === 0;
-  if (links.size > 0 && chatIn.placeholder !== 'Say hi') chatIn.placeholder = 'Say hi';
-  if (links.size === 0) chatIn.placeholder = 'Connect to someone first';
-
-  const ul = $('[data-links]');
-  ul.replaceChildren(...[...links.values()].map((l) => {
-    const li = document.createElement('li');
-    const name = document.createElement('b');
-    name.textContent = l.name;
-    const meta = document.createElement('span');
-    meta.className = 'muted text-sm';
-    meta.textContent = ` ${l.via === 'code' ? 'via code' : 'via room'}, ${l.kind}${l.rtt != null ? `, ${l.rtt} ms` : ''}`;
-    li.append(name, meta);
-    return li;
-  }));
-
-  drawGraph(ids);
-  renderRelays();
-  if (swarm && roomReady) {
-    const inRoom = [...links.values()].filter((l) => l.via === 'room').length;
-    flash(roomMsg, inRoom > 0
-      ? `In the room and linked to ${inRoom} ${inRoom === 1 ? 'person' : 'people'} through it. New people get linked in automatically.`
-      : 'In the room. Waiting for someone else to show up. Ask a friend to join too.', inRoom > 0 ? 'green' : 'muted');
-  }
-  $('[data-report]').textContent = reportText();
-}
-
-function drawGraph(ids: string[]): void {
-  const svg = $<SVGSVGElement>('[data-graph]');
-  const shown = [selfId, ...ids.filter((i) => i !== selfId).sort()].slice(0, 24);
-  const W = 400, H = 300, cx = W / 2, cy = H / 2;
-  const r = shown.length <= 1 ? 0 : Math.min(115, 40 + shown.length * 10);
-  const pos = new Map<string, { x: number; y: number }>();
-  shown.forEach((id, i) => {
-    const a = -Math.PI / 2 + (i / shown.length) * Math.PI * 2;
-    pos.set(id, { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
-  });
-
-  const edges = new Set<string>();
-  const addEdge = (a: string, b: string): void => {
-    if (pos.has(a) && pos.has(b) && a !== b) edges.add([a, b].sort().join('|'));
-  };
-  for (const id of links.keys()) addEdge(selfId, id);
-  for (const [id, e] of roster) for (const other of e.links) addEdge(id, other);
-
-  const NS = 'http://www.w3.org/2000/svg';
-  const el = (tag: string, attrs: Record<string, string | number>): SVGElement => {
-    const n = document.createElementNS(NS, tag);
-    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v));
-    return n;
-  };
-  const kids: SVGElement[] = [];
-  for (const e of edges) {
-    const [a, b] = e.split('|') as [string, string];
-    const pa = pos.get(a)!, pb = pos.get(b)!;
-    const mine = a === selfId || b === selfId;
-    kids.push(el('line', { x1: pa.x, y1: pa.y, x2: pb.x, y2: pb.y, class: mine ? 'edge mine' : 'edge' }));
-  }
-  for (const id of shown) {
-    const p = pos.get(id)!;
-    const me = id === selfId;
-    kids.push(el('circle', { cx: p.x, cy: p.y, r: me ? 11 : 8, class: me ? 'node me' : links.has(id) ? 'node linked' : 'node' }));
-    const label = el('text', { x: p.x, y: p.y + (p.y > cy ? 24 : -16), class: 'label' });
-    label.textContent = me ? `${myName} (you)` : links.get(id)?.name ?? roster.get(id)?.name ?? 'someone';
-    kids.push(label);
-  }
-  svg.replaceChildren(...kids);
-}
-
-function renderRelays(): void {
-  const ul = $('[data-relays]');
-  if (!swarm) return void ul.replaceChildren();
-  const eps = swarm.status()[0]?.endpoints ?? [];
-  ul.replaceChildren(...eps.map((e) => {
-    const li = document.createElement('li');
-    li.className = e.up ? 'up' : 'down';
-    li.textContent = e.url.replace('wss://', '');
-    return li;
-  }));
-}
-
-function renderContacts(): void {
-  const list = contactList();
-  const ours = list.filter((c) => /(^|\.)browsercoin\.org$/i.test(c.host.split(':')[0]!));
-  $('[data-servers-count]').textContent = String(ours.length);
-  $('[data-servers-pill]').classList.toggle('bad', ours.length > 0);
-
-  const ul = $('[data-contacts]');
-  const items: HTMLLIElement[] = list.map((c) => {
-    const li = document.createElement('li');
-    const what = c.kind === 'websocket' && DEFAULT_NOSTR_RELAYS.some((u) => u.endsWith(c.host))
-      ? 'Nostr relay, passes introductions for the test room'
-      : c.kind === 'websocket' ? 'WebSocket' : 'web request';
-    li.innerHTML = '<b></b> <span class="muted text-sm"></span>';
-    li.querySelector('b')!.textContent = c.host;
-    li.querySelector('span')!.textContent = what;
-    return li;
-  });
-  const stun = document.createElement('li');
-  stun.innerHTML = '<b>STUN servers</b> <span class="muted text-sm"></span>';
-  stun.querySelector('span')!.textContent =
-    `asked "what is my public address?" when you make a code or join the room: ${ICE_SERVERS.map((s) => String(s.urls).replace(/^stun:/, '').replace(/:\d+$/, '')).join(', ')}`;
-  items.push(stun);
-  if (list.length === 0) {
-    const none = document.createElement('li');
-    none.innerHTML = '<b>Nothing yet</b> <span class="muted text-sm">The page has not contacted anything since it loaded.</span>';
-    items.unshift(none);
-  }
-  ul.replaceChildren(...items);
-}
+// ── Start ───────────────────────────────────────────────────────────────────
 
 onContact(renderContacts);
 renderContacts();
 render();
-setInterval(renderRelays, 2000);
+
+// Opened from a friend's invite link: answer it straight away. Clear the hash
+// so a reload doesn't try to reuse a code that is already spent.
+const fromLink = extractCode(location.hash.slice(1));
+if (fromLink) history.replaceState(null, '', location.pathname + location.search);
+if (fromLink && typeof decodeCode(fromLink) === 'object') {
+  theirIn.value = fromLink;
+  void useTheirCode(fromLink).then(() => { if (!mine) void makeInvite(); });
+} else {
+  void makeInvite();
+}
 
 // ── Small helpers ───────────────────────────────────────────────────────────
 
@@ -558,7 +466,7 @@ function copy(btn: HTMLButtonElement, text: string): void {
     btn.textContent = 'Copied!';
     setTimeout(() => (btn.textContent = old), 1200);
   }, () => {
-    btn.textContent = 'Copy failed, select and copy by hand';
+    btn.textContent = 'Copy failed';
   });
 }
 
@@ -576,8 +484,7 @@ function secs(ms: number): string {
 
 function randomChars(n: number): string {
   const a = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  const b = crypto.getRandomValues(new Uint8Array(n));
-  return [...b].map((x) => a[x % a.length]).join('');
+  return [...crypto.getRandomValues(new Uint8Array(n))].map((x) => a[x % a.length]).join('');
 }
 
 function pick<T>(xs: T[]): T {
@@ -589,15 +496,16 @@ function load(k: string): string | null {
 }
 
 function save(k: string, v: string): void {
-  try { localStorage.setItem(k, v); } catch { /* private mode; name lasts this session */ }
+  try { localStorage.setItem(k, v); } catch { /* private mode; the name lasts this session */ }
 }
 
 function browserLabel(): string {
   const ua = navigator.userAgent;
-  const b = /Edg\/(\d+)/.exec(ua) ? `Edge ${/Edg\/(\d+)/.exec(ua)![1]}`
-    : /Firefox\/(\d+)/.exec(ua) ? `Firefox ${/Firefox\/(\d+)/.exec(ua)![1]}`
-    : /Chrome\/(\d+)/.exec(ua) ? `Chrome ${/Chrome\/(\d+)/.exec(ua)![1]}`
-    : /Version\/(\d+).*Safari/.exec(ua) ? `Safari ${/Version\/(\d+)/.exec(ua)![1]}`
+  const v = (re: RegExp): string => re.exec(ua)?.[1] ?? '';
+  const b = /Edg\//.test(ua) ? `Edge ${v(/Edg\/(\d+)/)}`
+    : /Firefox\//.test(ua) ? `Firefox ${v(/Firefox\/(\d+)/)}`
+    : /Chrome\//.test(ua) ? `Chrome ${v(/Chrome\/(\d+)/)}`
+    : /Safari\//.test(ua) ? `Safari ${v(/Version\/(\d+)/)}`
     : 'other';
   const os = /iPhone|iPad/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android'
     : /Windows/.test(ua) ? 'Windows' : /Mac OS/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'other OS';

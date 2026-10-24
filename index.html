@@ -5,261 +5,102 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark" />
   <title>No Server Needed</title>
-  <meta name="description" content="Two browsers connect directly with no browserCoin server in between. A community test for the next browserCoin release." />
+  <meta name="description" content="Trade codes with a friend and your two browsers connect directly, with no server in between. A browserCoin test." />
 </head>
 <body>
   <header class="top">
     <div class="wrap top-inner">
       <a class="brand" href="https://browsercoin.org" target="_blank" rel="noopener">
-        <img data-logo alt="" width="32" height="32" />
+        <img data-logo alt="" width="28" height="28" />
         <span>browserCoin <span class="muted">p2p test</span></span>
       </a>
-      <div class="pill" data-servers-pill title="Counts connections to any browsercoin.org host since this page loaded">
-        <span class="dot"></span> browserCoin servers contacted: <b data-servers-count>0</b>
+      <div class="pill" data-servers-pill title="Connections to any browsercoin.org server since this page loaded">
+        <span class="dot"></span> servers used: <b data-servers-count>0</b>
       </div>
     </div>
   </header>
 
   <main class="wrap">
     <section class="hero">
-      <p class="eyebrow">Community test for the next release</p>
-      <h1>Two browsers.<br />No server in between.</h1>
-      <p class="lead">
-        This page connects your browser straight to other people's browsers without
-        going through any browserCoin server. Try it with a friend or with everyone
-        in the test room, then tell us in Discord how it went.
-      </p>
-      <div class="hero-actions">
-        <a class="btn" href="#try">Try it now</a>
-        <a class="btn ghost" href="#why">Why this matters</a>
+      <h1>Connect to a friend.<br />No server.</h1>
+      <p class="lead">Swap codes and your two browsers link up directly. Nothing in between.</p>
+    </section>
+
+    <section class="grid2">
+      <div class="card" data-mine>
+        <h2 data-mine-title>1. Your code</h2>
+        <p class="hint" data-mine-hint>Let your friend scan this, or send them the link.</p>
+        <div class="qr-tile"><canvas data-qr width="240" height="240" aria-label="Your code as a QR code"></canvas></div>
+        <div class="row center">
+          <button class="btn" data-copy-mine disabled>Copy link</button>
+          <button class="btn ghost" data-share-mine hidden>Share</button>
+        </div>
+        <div class="status" data-mine-msg>Making your code…</div>
+      </div>
+
+      <div class="card" data-theirs>
+        <h2>2. Your friend's code</h2>
+        <p class="hint">Paste their code or link, or add a screenshot of their QR code.</p>
+        <textarea data-their-in class="code" rows="4" placeholder="Paste here" autocomplete="off" spellcheck="false"></textarea>
+        <div class="row">
+          <label class="btn ghost file-btn">
+            Upload QR screenshot
+            <input type="file" accept="image/*" data-upload hidden />
+          </label>
+          <button class="btn" data-go>Connect</button>
+        </div>
+        <p class="hint text-sm">You can also drop an image here, or paste one with Ctrl+V.</p>
+        <div class="status" data-their-msg></div>
       </div>
     </section>
 
-    <section id="why" class="section">
-      <h2>Why this matters</h2>
-      <div class="prose">
+    <section class="card connected" data-connected hidden>
+      <h2 data-connected-title>Connected</h2>
+      <ul class="links" data-links></ul>
+      <div class="chat-log" data-chat-log aria-live="polite"></div>
+      <form class="row" data-chat-form>
+        <input data-chat-in placeholder="Say hi" maxlength="280" autocomplete="off" />
+        <button class="btn">Send</button>
+      </form>
+      <p class="hint text-sm">
+        Your name: <input data-name class="name-input" maxlength="24" aria-label="Your display name" />
+        Want to add another friend? Your code above is fresh again.
+      </p>
+    </section>
+
+    <p class="warn text-sm">Codes include your public IP address, like any website sees. Swap them in a DM, not a public channel.</p>
+
+    <section class="more">
+      <details>
+        <summary>Why this matters</summary>
         <p>
-          A browser cannot accept a connection out of nowhere. Before two browsers can talk
-          directly, a short introduction (who you are, how to reach you, a security
-          fingerprint) has to travel between them some other way.
+          Today every new browserCoin node gets introduced to the others through two small
+          servers I run. If they go down, nobody new can join, and a network nobody can join
+          slowly dies.
         </p>
         <p>
-          Today every browserCoin introduction goes through two small servers that I run,
-          <code>peer1</code> and <code>peer2</code>. That makes them a single point of
-          failure. If they go down, links that already exist keep working, but nobody new
-          can join. A network nobody can join slowly dies. A coin that lives in your
-          browser should not depend on one person paying for two servers.
+          This test shows the fix: the introduction is just a short code, and any channel can
+          carry it. A DM, a QR code, a photo of a screen. After that the two browsers talk
+          directly, encrypted. The next browserCoin release uses this exact code.
         </p>
-        <p>
-          The next release removes that dependency. The introduction can travel two
-          other ways, and either one is enough on its own:
-        </p>
-      </div>
-      <div class="grid2">
-        <div class="card">
-          <h3>Automatic, through Nostr</h3>
-          <p>
-            Nostr is an open messaging network with hundreds of public relays run by
-            unrelated people. Your browser posts a sealed connection offer there, another
-            browser picks it up, and the two connect directly. The relay only passes the
-            introduction along and is out of the picture once you are connected.
-          </p>
-        </div>
-        <div class="card">
-          <h3>By hand, with a code</h3>
-          <p>
-            No relay at all. You create a short code and send it to a friend over Discord,
-            WhatsApp, email, anything. They paste it and send a reply code back. That is
-            the whole handshake, and there is nothing in the middle that anyone could
-            switch off.
-          </p>
-        </div>
-      </div>
-      <p class="note">
-        We got the introduction down to about 150 characters, small enough to paste into
-        a chat message. Everything after it travels directly between the two browsers,
-        encrypted.
-      </p>
-    </section>
-
-    <section id="try" class="section">
-      <h2>Try it</h2>
-      <p class="muted">
-        Your name here: <input data-name class="name-input" maxlength="24" aria-label="Your display name" />
-        <span class="text-sm">(only shown to people you connect to)</span>
-      </p>
-
-      <div class="grid2 try-grid">
-        <div class="card" data-manual>
-          <div class="card-head">
-            <h3>1. With a friend</h3>
-            <span class="tag">no relay at all</span>
-          </div>
-          <div class="tabs" role="tablist">
-            <button class="tab active" data-tab="invite" role="tab">I'm inviting</button>
-            <button class="tab" data-tab="join" role="tab">I got a code</button>
-          </div>
-
-          <div data-pane="invite">
-            <ol class="steps">
-              <li>
-                <button class="btn small" data-mk-invite>Create my invite code</button>
-                <textarea data-invite-out class="code" rows="3" readonly placeholder="Your invite code appears here."></textarea>
-                <div class="row">
-                  <button class="btn ghost small" data-copy-invite disabled>Copy</button>
-                  <button class="btn ghost small" data-share-invite disabled hidden>Share</button>
-                </div>
-                <p class="text-sm muted">Send it to your friend in a DM. Tell them to open this page and pick "I got a code".</p>
-              </li>
-              <li>
-                <span class="text-sm">Paste the reply code they send back:</span>
-                <div class="row">
-                  <input data-reply-in class="code-in" placeholder="BC1..." autocomplete="off" spellcheck="false" />
-                  <button class="btn small" data-finish>Connect</button>
-                </div>
-              </li>
-            </ol>
-            <div class="status" data-invite-msg></div>
-          </div>
-
-          <div data-pane="join" hidden>
-            <ol class="steps">
-              <li>
-                <span class="text-sm">Paste the invite code your friend sent you:</span>
-                <div class="row">
-                  <input data-invite-in class="code-in" placeholder="BC1..." autocomplete="off" spellcheck="false" />
-                  <button class="btn small" data-accept>Make reply</button>
-                </div>
-              </li>
-              <li>
-                <span class="text-sm">Send this reply back to them. You connect the moment they paste it.</span>
-                <textarea data-reply-out class="code" rows="3" readonly placeholder="Your reply code appears here."></textarea>
-                <div class="row">
-                  <button class="btn ghost small" data-copy-reply disabled>Copy</button>
-                  <button class="btn ghost small" data-share-reply disabled hidden>Share</button>
-                </div>
-              </li>
-            </ol>
-            <div class="status" data-join-msg></div>
-          </div>
-          <p class="warn text-sm">
-            Codes contain your public IP address, the same thing every website you visit
-            sees. Share them with people you know, in a DM, not in a big public channel.
-          </p>
-        </div>
-
-        <div class="card" data-room>
-          <div class="card-head">
-            <h3>2. With everyone</h3>
-            <span class="tag">via public Nostr relays</span>
-          </div>
-          <p>
-            Join the test room and your browser finds other people who have this page open,
-            using public Nostr relays to pass the introductions. Nobody needs to send
-            anybody a code.
-          </p>
-          <div class="row">
-            <button class="btn" data-join-room>Join the test room</button>
-            <button class="btn ghost" data-leave-room hidden>Leave</button>
-          </div>
-          <div class="status" data-room-msg></div>
-          <ul class="relays" data-relays></ul>
-          <p class="text-sm muted">
-            This is a separate test network. It does not touch the real browserCoin
-            network and carries no coins.
-          </p>
-        </div>
-      </div>
-    </section>
-
-    <section class="section" data-net>
-      <h2>Your network</h2>
-      <p class="muted" data-net-summary>Not connected to anyone yet.</p>
-      <div class="grid2 net-grid">
-        <div class="card">
-          <svg data-graph viewBox="0 0 400 300" role="img" aria-label="Map of browsers in this network and who is linked to whom"></svg>
-          <ul class="links" data-links></ul>
-        </div>
-        <div class="card chat">
-          <div class="chat-log" data-chat-log aria-live="polite">
-            <p class="muted text-sm">Messages go browser to browser. Each one hops across the links you see on the left, so people you are not linked to directly still get it.</p>
-          </div>
-          <form class="row" data-chat-form>
-            <input data-chat-in placeholder="Say hi" maxlength="280" autocomplete="off" disabled />
-            <button class="btn small" data-chat-send disabled>Send</button>
-          </form>
-        </div>
-      </div>
-    </section>
-
-    <section class="section">
-      <h2>What this page talks to</h2>
-      <p class="muted">
-        A live list of every outside computer this page has contacted since it loaded.
-        Nothing here is hidden behind a server of ours.
-      </p>
-      <ul class="contacts" data-contacts></ul>
-      <div class="card">
+      </details>
+      <details>
+        <summary>What this page talks to</summary>
+        <ul class="contacts" data-contacts></ul>
         <p class="text-sm" data-origin></p>
         <button class="btn ghost small" data-save>Save this page to your computer</button>
-      </div>
-    </section>
-
-    <section class="section">
-      <h2>Honest limits</h2>
-      <div class="grid2">
-        <div class="card">
-          <h3>Some networks will not connect</h3>
-          <p>
-            Strict office firewalls and some mobile carriers block direct links between
-            browsers. The usual workaround is a relay server that forwards all your
-            traffic, which we are deliberately not using. How often this happens in
-            practice is a big part of what this test is for.
-          </p>
-        </div>
-        <div class="card">
-          <h3>STUN still exists</h3>
-          <p>
-            To learn its own public address, your browser asks a STUN server (Google,
-            Cloudflare and several others). STUN sees your IP address and nothing else. No
-            messages pass through it, and any of a dozen providers will do.
-          </p>
-        </div>
-        <div class="card">
-          <h3>This page came from a web host</h3>
-          <p>
-            Unless you saved it. Use the save button above, open the file from your disk,
-            and it still works. A whole browserCoin node can run the same way.
-          </p>
-        </div>
-        <div class="card">
-          <h3>Nostr relays see that you are here</h3>
-          <p>
-            Offers are sealed so the relay firehose does not show your address to casual
-            readers, but anyone who knows this page can read them. If that bothers you,
-            use the code method, which involves no relay at all.
-          </p>
-        </div>
-      </div>
-    </section>
-
-    <section class="section" id="report">
-      <h2>Help us test</h2>
-      <ol class="prose">
-        <li>Connect with a friend using a code, ideally on different networks (home Wi-Fi and phone data is a great combo).</li>
-        <li>Join the test room and see who shows up.</li>
-        <li>Copy your report and paste it in the browserCoin Discord.</li>
-      </ol>
-      <div class="card">
+      </details>
+      <details>
+        <summary>Test report for Discord</summary>
         <pre class="report" data-report></pre>
-        <button class="btn" data-copy-report>Copy report for Discord</button>
-        <p class="text-sm muted">The report contains no IP addresses, codes or names.</p>
-      </div>
+        <button class="btn small" data-copy-report>Copy report</button>
+        <p class="hint text-sm">No IP addresses, codes or names in it.</p>
+      </details>
     </section>
   </main>
 
   <footer class="wrap foot">
-    <p>Made by swompy for <a href="https://browsercoin.org" target="_blank" rel="noopener">browserCoin</a>. Runs the same connection code as the upcoming release.</p>
+    <p>Made by swompy for <a href="https://browsercoin.org" target="_blank" rel="noopener">browserCoin</a>.</p>
   </footer>
 
   <script type="module" src="/src/main.ts"></script>
