@@ -1,0 +1,21 @@
+{
+  "name": "browsercoin-p2p-demo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Two browsers connect with no browserCoin server in between. A community test page for browserCoin's serverless signaling.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@noble/curves": "2.3.0",
+    "@noble/hashes": "1.8.0"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vite": "6.4.2",
+    "vite-plugin-singlefile": "2.3.0"
+  }
+}
