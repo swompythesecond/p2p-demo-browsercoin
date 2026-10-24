@@ -284,10 +284,20 @@ function onMessage(from: string, data: unknown): void {
     render();
     return;
   }
-  // Chat floods across links, so friends of friends see it too.
-  if (m.t !== 'chat' || typeof m.id !== 'string' || typeof m.text !== 'string' || seen.has(m.id)) return;
-  remember(m.id);
-  showChat(cleanName(String(m.name ?? '')), m.text.slice(0, 280), false);
+  // Chat and emoji flood across links, so friends of friends see them too.
+  if (typeof m.id !== 'string' || seen.has(m.id)) return;
+  const name = cleanName(String(m.name ?? ''));
+  if (m.t === 'chat' && typeof m.text === 'string') {
+    remember(m.id);
+    showChat(name, m.text.slice(0, 280), false);
+  } else if (m.t === 'emoji' && typeof m.e === 'string' && EMOJIS.has(m.e)) {
+    remember(m.id);
+    popEmoji(m.e);
+    showChat(name, `sent ${m.e}`, false);
+    if (!results.includes('emoji: received')) results.push('emoji: received');
+  } else {
+    return;
+  }
   const ttl = typeof m.ttl === 'number' ? Math.min(m.ttl, FLOOD_TTL) : 0;
   if (ttl > 1) for (const [id, l] of links) if (id !== from) send(l.conn, { ...m, ttl: ttl - 1 });
 }
@@ -307,6 +317,35 @@ $('[data-chat-form]').addEventListener('submit', (ev) => {
   showChat(myName, text, true);
   chatIn.value = '';
 });
+
+/** Only the emoji on the buttons; anything else from a peer is ignored. */
+const EMOJIS = new Set(
+  [...document.querySelectorAll<HTMLButtonElement>('[data-emoji]')].map((b) => b.dataset.emoji!),
+);
+
+for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-emoji]')) {
+  btn.addEventListener('click', () => {
+    if (links.size === 0) return;
+    const e = btn.dataset.emoji!;
+    const id = randomChars(12);
+    remember(id);
+    for (const l of links.values()) send(l.conn, { t: 'emoji', id, name: myName, e, ttl: FLOOD_TTL });
+    showChat(myName, `sent ${e}`, true);
+    btn.classList.remove('sent');
+    void btn.offsetWidth; // restart the bounce
+    btn.classList.add('sent');
+  });
+}
+
+/** Big emoji that rises from the bottom of the screen and fades out. */
+function popEmoji(e: string): void {
+  const el = document.createElement('div');
+  el.className = 'pop';
+  el.textContent = e;
+  el.style.left = `${15 + Math.random() * 70}%`;
+  el.addEventListener('animationend', () => el.remove());
+  document.body.append(el);
+}
 
 function showChat(name: string, text: string, isMine: boolean): void {
   const log = $('[data-chat-log]');
