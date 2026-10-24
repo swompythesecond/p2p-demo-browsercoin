@@ -121,3 +121,5 @@ textarea.code { width: 100%; resize: vertical; margin: 4px 0 12px; font-family: 
 .foot { padding: 24px 16px 40px; color: var(--muted); font-size: 0.9rem; }
 /* The code has no spaces worth keeping; fill every line instead of breaking at hyphens. */
 [data-mine-text] { word-break: break-all; font-size: 0.78rem; margin-bottom: 14px; }
+.tip { margin: 16px 0 0; padding: 12px 16px; background: var(--accent-soft); border-radius: 10px; color: var(--text-2); font-size: 0.95rem; max-width: 720px; }
+.tip b { color: var(--text); display: block; margin-bottom: 2px; }
