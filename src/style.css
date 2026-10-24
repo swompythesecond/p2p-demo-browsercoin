@@ -119,3 +119,5 @@ textarea.code { width: 100%; resize: vertical; margin: 4px 0 12px; font-family: 
 .report { font-family: var(--mono); font-size: 0.8rem; background: var(--surface-2); border-radius: 8px; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 10px; color: var(--text-2); }
 
 .foot { padding: 24px 16px 40px; color: var(--muted); font-size: 0.9rem; }
+/* The code has no spaces worth keeping; fill every line instead of breaking at hyphens. */
+[data-mine-text] { word-break: break-all; font-size: 0.78rem; margin-bottom: 14px; }

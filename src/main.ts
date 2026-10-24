@@ -63,6 +63,7 @@ const qrCanvas = $<HTMLCanvasElement>('[data-qr]');
 const mineTitle = $('[data-mine-title]');
 const mineHint = $('[data-mine-hint]');
 const mineMsg = $('[data-mine-msg]');
+const mineText = $<HTMLTextAreaElement>('[data-mine-text]');
 const copyMine = $<HTMLButtonElement>('[data-copy-mine]');
 const shareMine = $<HTMLButtonElement>('[data-share-mine]');
 const theirIn = $<HTMLTextAreaElement>('[data-their-in]');
@@ -101,11 +102,12 @@ async function showMine(m: Mine): Promise<void> {
   const invite = m.mode === 'invite';
   mineTitle.textContent = invite ? '1. Your code' : '1. Send this back';
   mineHint.textContent = invite
-    ? 'Let your friend scan this, or send them the link.'
-    : 'Your friend scans this or pastes it into their page. You connect the moment they do.';
+    ? 'Let your friend scan the QR, or send them the link below.'
+    : 'Your friend scans the QR or pastes the text into their page. You connect the moment they do.';
   copyMine.textContent = invite ? 'Copy link' : 'Copy reply';
   copyMine.disabled = false;
   shareMine.hidden = typeof navigator.share !== 'function';
+  mineText.value = shareable(m);
   await QRCode.toCanvas(qrCanvas, shareable(m), {
     width: 240,
     margin: 2,
@@ -116,6 +118,9 @@ async function showMine(m: Mine): Promise<void> {
 }
 
 copyMine.addEventListener('click', () => mine && copy(copyMine, shareable(mine)));
+// One tap selects the whole code, so copying by hand never grabs half of it.
+mineText.addEventListener('focus', () => mineText.select());
+mineText.addEventListener('click', () => mineText.select());
 shareMine.addEventListener('click', () => {
   if (mine) void navigator.share({ text: shareable(mine) }).catch(() => { /* sheet closed */ });
 });
